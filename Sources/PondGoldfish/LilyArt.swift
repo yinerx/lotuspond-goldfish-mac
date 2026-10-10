@@ -1060,7 +1060,7 @@ struct LilyLayout {
 
         // Candidate points over open water.
         var cands: [(p: V2, clr: Double, crowd: Double)] = []
-        for _ in 0..<2500 {
+        for _ in 0..<5000 {
             let p = V2(rnd(0.04, 0.96) * U, rnd(0.05, 0.95) * V)
             let c = clearance(p, pads)
             if c < 6 { continue }
@@ -1075,8 +1075,9 @@ struct LilyLayout {
         var taken: [(V2, Double)] = []        // centre, keep-out radius (units)
         for (kind, sz, nearIsland) in wanted {
             let fr = sz / 2
-            for relax in [1.0, 0.7, 0.45] {
-                let minClr = max(8, fr * 0.42 * relax)       // centre clearly over water
+            for relax in [1.0, 0.8, 0.62] {
+                // Centre clearly over water: the flower may cover only a sliver of a rim.
+                let minClr = max(8, fr * (kind == .bud ? 0.6 : 0.8) * relax)
                 var best: (V2, Double)? = nil
                 for c in cands where c.clr >= minClr {
                     let spacing = (kind == .bud ? 150.0 : 260.0) * relax
