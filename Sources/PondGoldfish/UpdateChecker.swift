@@ -4,7 +4,7 @@ import Foundation
 /// App version info. The single source of truth is `CFBundleShortVersionString`
 /// written by build_app.sh; `swift run` has no bundle, so fall back to a constant.
 enum AppInfo {
-    static let fallbackVersion = "0.0.4"
+    static let fallbackVersion = "0.0.5"
 
     static var version: String {
         if let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,

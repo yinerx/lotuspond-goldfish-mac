@@ -11,6 +11,8 @@ import simd
 // rasterised with Core Graphics into a coverage mask first and then used by the
 // per-pixel pass, again like the mockup.
 //
+// Flowers stand in open water on their own stalks (never on a pad); see placeFlowers.
+//
 // Design (see README / release notes):
 //  * A pool of 24 unique pad textures in 3 size classes (8 large, 9 medium, 7 small)
 //    is generated once per launch, off the main thread, in parallel.
@@ -976,6 +978,8 @@ struct FlowerPlacement {
     var p: V2
     var size: Double   // sprite side in points
     var rot: Double    // radians, CCW
+    /// Where the stalk meets the water (points); a faint ring is drawn there.
+    var stalkBase: V2
 }
 
 struct LilyLayout {
@@ -1026,17 +1030,87 @@ struct LilyLayout {
                                        mirror: chance(0.5), rot: rnd(-0.17, 0.17)))
         }
 
-        // Flowers (mockup positions, y flipped, mapped proportionally).
-        func fp(_ x: Double, _ y: Double) -> V2 { V2(x / 1600 * U, (900 - y) / 900 * V) * ws }
-        L.flowers.append(FlowerPlacement(kind: .open, variant: Int.random(in: 0..<2), p: fp(300, 740), size: 196 * ws, rot: 10 * .pi / 180))
-        L.flowers.append(FlowerPlacement(kind: .half, variant: Int.random(in: 0..<2), p: fp(1330, 175), size: 132 * ws, rot: 20 * .pi / 180))
-        for (x, y, s, deg) in [(1062.0, 395.0, 58.0, 40.0), (205, 260, 62, -30), (1395, 720, 60, 160)] {
-            L.flowers.append(FlowerPlacement(kind: .bud, variant: Int.random(in: 0..<2), p: fp(x, y), size: s * ws, rot: deg * .pi / 180))
-        }
-        if areaK > 1.45 {   // very wide screens: one more half-open flower on the far side
-            L.flowers.append(FlowerPlacement(kind: .half, variant: Int.random(in: 0..<2), p: fp(120, 120), size: 120 * ws, rot: -0.4))
-        }
+        // Flowers: a lotus flower / bud rises on its own stalk from the root, separate
+        // from the leaves — so every flower stands over open WATER, in a gap inside a
+        // pile or at the edge of one (or next to the island), never on a pad. Seen from
+        // above it may overlap a pad's rim a little (it stands higher), but its centre
+        // is clearly over water. Computed from the actual pad layout, so it works for
+        // any 荷叶密度 / screen size.
+        L.flowers = placeFlowers(pads: pads, U: U, V: V, ws: ws, island: island, areaK: areaK)
         return L
+    }
+
+    /// Clearance (units) from `p` to the nearest pad outline (negative = on a pad).
+    private static func clearance(_ p: V2, _ pads: [(Double, Double, Double)]) -> Double {
+        var m = Double.infinity
+        for (x, y, r) in pads {
+            let d = hypot(p.x - x, p.y - y) - r * 1.03     // outlines reach ≤ ~1.03 r
+            if d < m { m = d }
+        }
+        return m
+    }
+
+    static func placeFlowers(pads: [(Double, Double, Double)], U: Double, V: Double, ws: Double,
+                             island: V2, areaK: Double) -> [FlowerPlacement] {
+        // (kind, sprite size in units, prefer the island?)
+        var wanted: [(FlowerPlacement.Kind, Double, Bool)] = [(.open, 196, false), (.half, 132, false),
+                                                              (.bud, 60, true), (.bud, 62, false), (.bud, 58, false)]
+        if areaK > 1.45 { wanted.insert((.half, 120, false), at: 2) }
+        if areaK > 1.9 { wanted.insert((.open, 176, false), at: 2) }
+
+        // Candidate points over open water.
+        var cands: [(p: V2, clr: Double, crowd: Double)] = []
+        for _ in 0..<2500 {
+            let p = V2(rnd(0.04, 0.96) * U, rnd(0.05, 0.95) * V)
+            let c = clearance(p, pads)
+            if c < 6 { continue }
+            var crowd = 0.0
+            for (x, y, r) in pads {
+                let d = hypot(p.x - x, p.y - y)
+                if d < 230 + r { crowd += 1 - d / (230 + r) }
+            }
+            cands.append((p, c, crowd))
+        }
+        var out: [FlowerPlacement] = []
+        var taken: [(V2, Double)] = []        // centre, keep-out radius (units)
+        for (kind, sz, nearIsland) in wanted {
+            let fr = sz / 2
+            for relax in [1.0, 0.7, 0.45] {
+                let minClr = max(8, fr * 0.42 * relax)       // centre clearly over water
+                var best: (V2, Double)? = nil
+                for c in cands where c.clr >= minClr {
+                    let spacing = (kind == .bud ? 150.0 : 260.0) * relax
+                    if taken.contains(where: { hypot($0.0.x - c.p.x, $0.0.y - c.p.y) < max(spacing, $0.1 + fr) }) { continue }
+                    // Prefer gaps in / next to the pad piles: crowded neighbourhood, and only
+                    // a little more water than needed (so it nestles against the leaves).
+                    var score = c.crowd * 1.0 - max(0, c.clr - minClr - 25) / 30
+                    if nearIsland { score += max(0, 1.6 - hypot(c.p.x - island.x, c.p.y - island.y) / 120) * 2.5 }
+                    score += rnd(0, 0.6)
+                    if best == nil || score > best!.1 { best = (c.p, score) }
+                }
+                guard let chosen = best else { continue }
+                let p = chosen.0
+                var rot = rnd(-0.6, 0.6)
+                var base = p
+                if kind == .bud {
+                    // Turn the bud so its stalk enters the water away from the leaves.
+                    var bestClr = -Double.infinity
+                    for _ in 0..<10 {
+                        let a = rnd(-Double.pi, Double.pi)
+                        let local = V2(-0.5 * sz, -0.03 * sz).rotated(a)
+                        let cl = clearance(p + local, pads)
+                        if cl > bestClr { bestClr = cl; rot = a; base = p + local }
+                    }
+                } else {
+                    base = p + V2(0.18, -0.24) * fr           // stalk peeks out under the flower
+                }
+                out.append(FlowerPlacement(kind: kind, variant: Int.random(in: 0..<2), p: p * ws,
+                                           size: sz * ws, rot: rot, stalkBase: base * ws))
+                taken.append((p, fr * 0.9 + 30))
+                break
+            }
+        }
+        return out
     }
 
     /// Placement transform: rotate by ±rot, optionally mirror across the light axis
@@ -1138,21 +1212,31 @@ enum LilyPreview {
             let m = flat.shadowMargin
             ctx.draw(flat.shadow, in: CGRect(x: -m + off.x, y: -m + off.y, width: W + 2 * m, height: H + 2 * m))
             ctx.restoreGState()
-            ctx.draw(flat.pads, in: CGRect(x: 0, y: 0, width: W, height: H))
-            for f in layout.flowers {
-                let t: FlowerTexture
+            func tex(_ f: FlowerPlacement) -> FlowerTexture {
                 switch f.kind {
-                case .open: t = bank.openLotus[f.variant]
-                case .half: t = bank.halfLotus[f.variant]
-                case .bud: t = bank.buds[f.variant]
+                case .open: return bank.openLotus[f.variant]
+                case .half: return bank.halfLotus[f.variant]
+                case .bud: return bank.buds[f.variant]
                 }
+            }
+            // flower shadows + stalk rings on the water, UNDER the pads
+            for f in layout.flowers {
+                let t = tex(f)
                 let ss = f.size * (1 + 2 * t.shadowMargin)
                 ctx.saveGState()
-                ctx.translateBy(x: CGFloat(f.p.x + off.x * 0.55), y: CGFloat(f.p.y + off.y * 0.55))
+                ctx.translateBy(x: CGFloat(f.p.x + off.x * 0.8), y: CGFloat(f.p.y + off.y * 0.8))
                 ctx.rotate(by: CGFloat(f.rot))
                 ctx.setAlpha(0.40)
                 ctx.draw(t.shadow, in: CGRect(x: -ss / 2, y: -ss / 2, width: ss, height: ss))
                 ctx.restoreGState()
+                let rr = f.size * (f.kind == .bud ? 0.16 : 0.12)
+                ctx.setStrokeColor(rgba(230, 255, 245, 0.30))
+                ctx.setLineWidth(CGFloat(1.2 * ws))
+                ctx.strokeEllipse(in: CGRect(x: f.stalkBase.x - rr, y: f.stalkBase.y - rr * 0.8, width: 2 * rr, height: 1.6 * rr))
+            }
+            ctx.draw(flat.pads, in: CGRect(x: 0, y: 0, width: W, height: H))
+            for f in layout.flowers {
+                let t = tex(f)
                 ctx.saveGState()
                 ctx.translateBy(x: CGFloat(f.p.x), y: CGFloat(f.p.y))
                 ctx.rotate(by: CGFloat(f.rot))

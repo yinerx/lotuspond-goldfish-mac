@@ -98,6 +98,7 @@ final class PondScene: SKScene {
     private var padShadowMargin = 0.0
     private var padFade = 0.0
     private var flowerItems: [(node: SKSpriteNode, shadow: SKSpriteNode)] = []
+    private var stalkRings: [SKNode] = []
     private var padHits: [(c: V2, r: Double)] = []      // largest first = lowest
     private var openCenter = V2(0, 0)
     private var padGeneration = 0
@@ -150,13 +151,13 @@ final class PondScene: SKScene {
     private func build() {
         built = true
         removeAllChildren()
-        // floor → fish shadows → water tint → fish → glint → pad shadow → water surface
-        // (ripples, duckweed, floating leaves) → pads → things on pads → flower shadows
-        // → flowers → falling leaves → rain → day/night grading (multiply, everything).
+        // floor → fish shadows → water tint → fish → glint → pad & flower shadows (on the
+        // water) → water surface (ripples, stalk rings, duckweed, floating leaves) → pads
+        // → things on pads → flowers (stand on their own stalks above the water) → falling leaves → rain → day/night grading (multiply, everything).
         let layers: [(SKNode, CGFloat)] = [
             (floorLayer, 0), (shadowLayer, 5), (hazeLayer, 8), (fishLayer, 10), (glintLayer, 25),
-            (padShadowLayer, 27), (surfaceLayer, 28), (padLayer, 30), (onPadLayer, 30.5),
-            (flowerShadowLayer, 31), (flowerLayer, 32), (fallingLayer, 40), (rainLayer, 60), (ambientLayer, 100)
+            (padShadowLayer, 27), (flowerShadowLayer, 27.2), (surfaceLayer, 28), (padLayer, 30), (onPadLayer, 30.5),
+            (flowerLayer, 32), (fallingLayer, 40), (rainLayer, 60), (ambientLayer, 100)
         ]
         for (n, z) in layers {
             n.zPosition = z
@@ -263,8 +264,10 @@ final class PondScene: SKScene {
         guard gen == padGeneration else { return }
         var old: [SKNode] = [padSprite, padShadowSprite].compactMap { $0 }
         for f in flowerItems { old.append(f.node); old.append(f.shadow) }
+        old += stalkRings
         for n in old { n.run(.sequence([.fadeOut(withDuration: 0.5), .removeFromParent()])) }
         flowerItems.removeAll()
+        stalkRings.removeAll()
 
         let pads = SKSpriteNode(texture: Painter.texture(flat.pads), size: CGSize(width: W, height: H))
         pads.anchorPoint = .zero
@@ -318,6 +321,20 @@ final class PondScene: SKScene {
             fs.zRotation = node.zRotation
             flowerShadowLayer.addChild(fs)
             flowerItems.append((node, fs))
+
+            // Faint ring where the stalk rises out of the water, gently lapping.
+            let d = f.size * (f.kind == .bud ? 0.32 : 0.24)
+            let ring = SKSpriteNode(texture: TextureBank.shared.ring, size: CGSize(width: d, height: d * 0.8))
+            ring.position = f.stalkBase.cg
+            ring.zPosition = -0.4
+            ring.alpha = 0
+            let a0 = rnd(0.16, 0.22)
+            ring.run(.sequence([.fadeAlpha(to: CGFloat(a0), duration: 0.6), .repeatForever(.sequence([
+                .group([.scale(to: 1.12, duration: 2.2), .fadeAlpha(to: CGFloat(a0 * 0.6), duration: 2.2)]),
+                .group([.scale(to: 1.0, duration: 2.2), .fadeAlpha(to: CGFloat(a0), duration: 2.2)])
+            ]))]))
+            surfaceLayer.addChild(ring)
+            stalkRings.append(ring)
         }
     }
 
@@ -498,7 +515,7 @@ final class PondScene: SKScene {
             sh.alpha = CGFloat(shadowA * 1.4 * padFade)
         }
         for f in flowerItems {
-            f.shadow.position = (f.node.position.v2 + surfaceOffset * 0.55).cg
+            f.shadow.position = (f.node.position.v2 + surfaceOffset * 0.8).cg
             f.shadow.setScale(f.node.xScale)
             f.shadow.alpha = CGFloat(shadowA * 1.15 * padFade)
         }
