@@ -1,0 +1,101 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'V*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build app
+        run: bash build_app.sh
+
+      - name: Determine version
+        id: ver
+        run: |
+          PLIST="build/池塘金鱼.app/Contents/Info.plist"
+          APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#[vV]}"
+            if [[ "$TAG_VERSION" != "$APP_VERSION" ]]; then
+              echo "::warning::Tag version ($TAG_VERSION) != app CFBundleShortVersionString ($APP_VERSION)"
+            fi
+            VERSION="$TAG_VERSION"
+          else
+            VERSION="$APP_VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dmg=LotusPondGoldfish-$VERSION.dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/dmg"
+          rm -rf "$STAGE" && mkdir -p "$STAGE"
+          ditto "build/池塘金鱼.app" "$STAGE/池塘金鱼.app"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "池塘金鱼" -srcfolder "$STAGE" -ov -format UDZO "${{ steps.ver.outputs.dmg }}"
+          hdiutil verify "${{ steps.ver.outputs.dmg }}"
+          ls -lh "${{ steps.ver.outputs.dmg }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.ver.outputs.dmg }}
+          path: ${{ steps.ver.outputs.dmg }}
+          if-no-files-found: error
+
+      - name: Write release notes
+        if: github.ref_type == 'tag'
+        run: |
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          ## 池塘金鱼 ${{ github.ref_name }}
+
+          下载下面的 `${{ steps.ver.outputs.dmg }}`，双击打开后把「池塘金鱼」拖进「应用程序」文件夹即可。需要 macOS 14（Sonoma）或更新版本。
+
+          ### ⚠️ 首次打开须知
+
+          本程序只做了 **ad-hoc 签名**，**没有经过 Apple 公证（notarize）**，所以第一次打开时 macOS 会提示“无法验证开发者”或“已损坏”。处理方法：
+
+          1. 在 Finder 的「应用程序」里 **右键（或按住 Control 点按）「池塘金鱼」→ 打开**，在弹窗里再点一次“打开”；
+          2. 或者先双击一次，然后到 **系统设置 → 隐私与安全性**，在页面下方点 **“仍要打开”**；
+          3. 如果仍然提示“已损坏，无法打开”，在终端执行：
+
+             ```bash
+             xattr -dr com.apple.quarantine "/Applications/池塘金鱼.app"
+             ```
+
+          之后就可以像普通 App 一样正常双击打开了。程序启动后在屏幕右上角菜单栏找小鱼图标 🐟。
+          NOTES
+          sed -i '' 's/^          //' "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Create / update GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: 池塘金鱼 ${{ github.ref_name }}
+          body_path: ${{ runner.temp }}/notes.md
+          files: ${{ steps.ver.outputs.dmg }}
+          fail_on_unmatched_files: true
+          overwrite_files: true
