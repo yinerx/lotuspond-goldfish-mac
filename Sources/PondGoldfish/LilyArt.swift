@@ -1079,7 +1079,8 @@ struct LilyLayout {
                 // Centre clearly over water: the flower may cover only a sliver of a rim.
                 let minClr = max(8, fr * (kind == .bud ? 0.6 : 0.8) * relax)
                 var best: (V2, Double)? = nil
-                for c in cands where c.clr >= minClr {
+                let edge = fr * 0.75                         // keep the flower on screen
+                for c in cands where c.clr >= minClr && c.p.x > edge && c.p.x < U - edge && c.p.y > edge && c.p.y < V - edge {
                     let spacing = (kind == .bud ? 150.0 : 260.0) * relax
                     if taken.contains(where: { hypot($0.0.x - c.p.x, $0.0.y - c.p.y) < max(spacing, $0.1 + fr) }) { continue }
                     // Prefer gaps in / next to the pad piles: crowded neighbourhood, and only
