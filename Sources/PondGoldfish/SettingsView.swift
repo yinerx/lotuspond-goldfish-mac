@@ -220,17 +220,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self, let w = self.window, w.isKeyWindow else { return event }
-                let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                let isCmdW = mods == .command && event.charactersIgnoringModifiers?.lowercased() == "w"
-                let isEsc = event.keyCode == 53 && mods.isDisjoint(with: [.command, .option, .control])
-                if isCmdW || isEsc {
-                    w.performClose(nil)
-                    return nil
-                }
-                return event
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let isCmdW = mods == .command && event.charactersIgnoringModifiers?.lowercased() == "w"
+            let isEsc = event.keyCode == 53 && mods.isDisjoint(with: [.command, .option, .control])
+            guard isCmdW || isEsc else { return event }
+            let handled: Bool = MainActor.assumeIsolated {
+                guard let w = self?.window, w.isKeyWindow else { return false }
+                w.performClose(nil)
+                return true
             }
+            return handled ? nil : event
         }
     }
 
