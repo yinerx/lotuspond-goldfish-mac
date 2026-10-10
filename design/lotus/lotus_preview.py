@@ -867,7 +867,7 @@ RIDGE = C(196, 236, 210)
 RIM = C(214, 242, 224)
 
 
-def draw_droplet(col, xx, yy, px, py, pr, light, sc, strength=1.0):
+def draw_droplet(col, xx, yy, px, py, pr, light, sc, strength=1.0, rim_col=None):
     """In-place droplet on a colour field (bbox only). Clear, slightly lighter inside,
     soft contact shadow, darker rim (strongest on the lit side), bright caustic on the far
     side, white specular + a tiny secondary glint."""
@@ -895,7 +895,7 @@ def draw_droplet(col, xx, yy, px, py, pr, light, sc, strength=1.0):
     body = ref * 1.10 + C(16, 22, 18) * (.5 + .5 * np.clip(-lam, 0, 1))[..., None]
     # dark rim: thin outline, heavier on the lit side
     rimw = smooth(.68, .97, q) * (1 - smooth(.97, 1.05, q))
-    body = mix(body, GROOVE * .8, rimw * (.38 + .32 * np.clip(lam + .2, 0, 1)) * strength)
+    body = mix(body, (GROOVE if rim_col is None else rim_col) * .8, rimw * (.38 + .32 * np.clip(lam + .2, 0, 1)) * strength)
     # caustic crescent on the side away from the light
     cx_, cy_ = px - lx * pr * .42, py - ly * pr * .42
     cau = np.exp(-(np.hypot(X - cx_, Y - cy_) / (pr * .38)) ** 2) * (q < 1)
@@ -1234,6 +1234,373 @@ def render_v2():
     print('v2 ok')
 
 
+# ================================================================ V3 (irregular leaves, crowded layout)
+# Leaf variety after the Nelumbo specimen sheet (ref 1) and a crowded-edge layout
+# after the illustrated pond (ref 2). Same vein/droplet language as v2.
+
+PAD_PALETTES = {   # centre, mid, edge, rim-highlight
+    'yellowgreen': (C(118, 156, 62), C(150, 186, 74), C(176, 204, 96), C(226, 238, 170)),
+    'fresh':       (C(84, 148, 70), C(116, 176, 82), C(146, 198, 100), C(210, 236, 180)),
+    'mint':        (C(80, 152, 112), C(106, 178, 134), C(132, 198, 154), C(214, 242, 224)),
+    'blue':        (C(52, 116, 102), C(74, 140, 120), C(98, 162, 138), C(184, 222, 206)),
+    'young':       (C(140, 152, 96), C(176, 142, 116), C(196, 146, 136), C(236, 210, 200)),
+}
+
+
+def random_pad_params(rng, r_final):
+    """Per-pad variety: palette, aspect, kidney lobes, ruffle, nibbles, notch, age."""
+    u = rng.random()
+    kind = ('yellowgreen' if u < .22 else 'fresh' if u < .52 else 'mint' if u < .75 else 'blue' if u < .955 else 'young')
+    p = dict(kind=kind,
+             aspect=float(rng.uniform(.74, 1.0)) if rng.random() < .7 else 1.0,
+             aspect_ang=float(rng.uniform(0, np.pi)),
+             kidney=float(rng.uniform(.12, .24)) if rng.random() < .3 else 0.0,
+             kidney_ang=float(rng.uniform(0, 2 * np.pi)),
+             wave_amp=float(rng.uniform(.006, .03)), wave_freq=int(rng.integers(5, 13)),
+             nibbles=int(rng.integers(1, 4)) if rng.random() < .22 else 0,
+             notch=float(rng.uniform(0, 2 * np.pi)) if rng.random() < .45 else None,
+             old=bool(rng.random() < .07 and kind != 'young'),
+             seed=int(rng.integers(0, 1 << 30)))
+    area = (r_final / 100.0) ** 2
+    p['n_drops'] = int(np.clip(rng.poisson(14 * area) , 0, 26)) if r_final > 34 else int(rng.integers(0, 2))
+    p['center_drop'] = bool(r_final > 70 and rng.random() < .6)
+    return p
+
+
+def pad_v3(N, kind='fresh', aspect=1.0, aspect_ang=0.0, kidney=0.0, kidney_ang=0.0, wave_amp=.012,
+           wave_freq=7, nibbles=0, notch=None, old=False, n_drops=8, center_drop=False, seed=0, light=LIGHT):
+    rng = np.random.default_rng(seed)
+    R = .46 * N; c = N / 2
+    sc = N / 600.0
+    vis = float(np.clip((N - 60) / 360, .25, 1.0))       # vein/panel strength: subtler on small leaves
+    yy, xx = np.mgrid[0:N, 0:N].astype(F32) + .5
+    dx, dy = xx - c, yy - c
+    rho = np.hypot(dx, dy) + 1e-4
+    th = np.arctan2(dy, dx)
+    ph = rng.uniform(0, 2 * np.pi, 6)
+    def redge_f(a):
+        e = 1.0 / np.sqrt(np.cos(a - aspect_ang) ** 2 + (np.sin(a - aspect_ang) / aspect) ** 2)
+        e = e * (1 - kidney * np.exp(-(wrap(a - kidney_ang) / .34) ** 2))           # two-lobed / kidney dip
+        e = e * (1 + wave_amp * np.sin(wave_freq * a + ph[0]) + wave_amp * .5 * np.sin(2.3 * wave_freq * a + ph[1])
+                 + .004 * np.sin(17 * a + ph[2]))
+        return R * e
+    redge = redge_f(th)
+    d = redge - rho
+    if notch is not None:
+        phi = wrap(th - notch)
+        redge = redge * (1 - .03 * np.exp(-((np.abs(phi) - .2) / .35) ** 2))
+        half = .11 * (.5 + .5 * np.clip(rho / R, 0, 1)) * smooth(.07, .22, rho / R)
+        kk = .02 * R
+        d = -kk * np.logaddexp(-(redge - rho) / kk, -((np.abs(phi) - half) * rho) / kk)
+    bites = []
+    for _ in range(nibbles):                                # small nibbled bites on the edge
+        a = rng.uniform(0, 2 * np.pi)
+        br = R * rng.uniform(.06, .11)
+        rr = float(redge_f(a)) + br * .25
+        bx, by = c + rr * math.cos(a), c + rr * math.sin(a)
+        for j in range(int(rng.integers(1, 4))):            # irregular: 1-3 overlapping circles
+            ox, oy = rng.normal(0, br * .5, 2)
+            bites.append((bx + ox, by + oy, br * rng.uniform(.6, 1.0)))
+    d_bite = np.full((N, N), 1e3, F32)
+    for bx, by, br in bites:
+        d_bite = np.minimum(d_bite, np.hypot(xx - bx, yy - by) - br)
+    d = np.minimum(d, d_bite)
+    cov = np.clip(d + .5, 0, 1)
+    t = np.clip(rho / redge, 0, 1)
+
+    c0, c1, c2, rimc = PAD_PALETTES[kind]
+    jit = (C(255, 255, 255) + rng.uniform(-.04, .04, 3).astype(F32))
+    c0, c1, c2 = c0 * jit, c1 * jit, c2 * jit
+    groove_c = np.clip(c1 * .58 + C(0, 6, 8), 0, 1)
+    ridge_c = np.clip(mix(c1, C(255, 255, 255), .45), 0, 1)
+    if kind == 'young':
+        groove_c = np.clip(c1 * .70, 0, 1)
+
+    nveins = int(np.clip(10 + N / 60, 11, 19))
+    bend = rng.uniform(-.10, .10)
+    swirl = bend * (rho / R) ** 1.6
+    ref = notch if notch is not None else rng.uniform(0, 2 * np.pi)
+    psi = (th - ref - swirl) % (2 * np.pi)
+    if notch is not None:
+        lo, hi = .17, 2 * np.pi - .17
+        va = np.sort(np.linspace(lo, hi, nveins) + rng.uniform(-.18, .18, nveins) * (hi - lo) / (nveins - 1))
+        edges = np.concatenate([[0.0], va, [2 * np.pi]])
+    else:
+        gap0 = 2 * np.pi / nveins
+        va = np.sort((np.arange(nveins) * gap0 + rng.uniform(-.18, .18, nveins) * gap0) % (2 * np.pi))
+        va = va - va[0]
+        edges = np.concatenate([va, [2 * np.pi]])
+    gap = 2 * np.pi / nveins
+    k = np.clip(np.searchsorted(edges, psi, side='right') - 1, 0, len(edges) - 2)
+    a0, a1 = edges[k], edges[k + 1]
+    f = np.clip((psi - a0) / np.maximum(a1 - a0, 1e-4), 0, 1)
+    d_next, d_prev = (a1 - psi) * rho, (psi - a0) * rho
+    if notch is not None:
+        nxt, prv = (k < len(edges) - 2), (k > 0)
+    else:
+        nxt = prv = np.ones_like(k, bool)
+
+    nlow = fbm((N, N), N / 5, rng, 3)
+    nmid = fbm((N, N), N / 25, rng, 3)
+    nfine = vnoise((N, N), max(1.5, N / 140), rng)
+    col = np.where((t < .6)[..., None], mix(c0, c1, smooth(0, .6, t)), mix(c1, c2, smooth(.6, 1, t)))
+    if kind == 'young':      # reddish young leaf: greener centre, blotchy pink
+        col = mix(col, C(190, 128, 124), smooth(.2, .7, nlow * .5 + .5) * .25)
+    lamb = (dx * math.cos(light) + dy * math.sin(light)) / R
+    col = col * (1 + .07 * lamb + .035 * nlow + .025 * nmid + .015 * nfine)[..., None]
+    tilt = rng.uniform(-.035, .035, len(edges))
+    mid_a = (a0 + a1) / 2 + ref
+    panel = 1 + (tilt[k] + .045 * np.cos(mid_a - light) * smooth(.15, .7, t) - .05 * (1 - np.sin(np.pi * f) ** .5)) * vis
+    cf = smooth(.06, .2, t)
+    panel = panel - .10 * vis * np.exp(-d_next / (9 * sc)) * nxt * cf + .05 * vis * np.exp(-d_prev / (7 * sc)) * prv * cf
+    col = col * panel[..., None]
+
+    groove, ridge_l = [], []
+    r_start = R * (.095 if center_drop else .035)
+    off = max(1.2, 2.3 * sc)
+    for a in va:
+        re = float(redge_f(ref + a + bend)) * .965
+        pts = []
+        for i in range(32):
+            s_ = i / 31
+            rr = r_start + (re - r_start) * s_
+            aa = ref + a + bend * (rr / R) ** 1.6 + .006 * math.sin(s_ * 9 + a * 3)
+            pts.append((c + rr * math.cos(aa), c + rr * math.sin(aa), aa))
+        groove.append(([(x, y) for x, y, _ in pts], max(1.2, 3.2 * sc), max(.8, 1.4 * sc)))
+        ridge_l.append(([(x - off * math.sin(aa), y + off * math.cos(aa)) for x, y, aa in pts], max(1.0, 2.0 * sc), max(.7, .9 * sc)))
+        if N > 250 and rng.random() < .45:
+            rf = R * rng.uniform(.58, .75)
+            da = gap * rng.uniform(.18, .28) * (1 if rng.random() < .5 else -1)
+            pts2 = []
+            for i in range(14):
+                s_ = i / 13
+                rr = rf + (re - rf) * s_
+                aa = ref + a + bend * (rr / R) ** 1.6 + da * s_ ** 1.3
+                pts2.append((c + rr * math.cos(aa), c + rr * math.sin(aa), aa))
+            groove.append(([(x, y) for x, y, _ in pts2], 1.8 * sc, 1.0 * sc))
+            ridge_l.append(([(x - off * .8 * math.sin(aa), y + off * .8 * math.cos(aa)) for x, y, aa in pts2], 1.3 * sc, .7 * sc))
+    ssv = 4 if N < 400 else 3
+    g = gaussian_filter(tapered_cov(groove, (N, N), ss=ssv), max(.5, .7 * sc))
+    rl = gaussian_filter(tapered_cov(ridge_l, (N, N), ss=ssv), max(.5, .8 * sc))
+    vf = (1 - .35 * smooth(.85, 1.0, t)) * (.45 + .55 * vis)
+    col = mix(col, ridge_c, rl * .55 * vf)
+    col = mix(col, groove_c, g * .70 * vf)
+
+    if old:     # yellowed / browned edge
+        yel = smooth(.70, 1.0, t + .22 * nlow + .08 * nmid)
+        col = mix(col, C(196, 172, 80) * (1 + .08 * nmid)[..., None], yel * .85)
+        col = mix(col, C(128, 96, 46), smooth(.45, .75, nmid * .8 + nfine * .4) * smooth(.7, .97, t) * .55)
+    if nibbles:  # browned rims around the bites
+        col = mix(col, C(130, 104, 56), np.exp(-np.clip(d_bite, 0, None) / (2.5 * sc + .8)) * .55)
+
+    col = col * (1 - .14 * np.exp(-((d - 4.2 * sc) / (1.6 * sc + .4)) ** 2))[..., None]
+    rimc_ = C(232, 214, 150) if old else rimc
+    col = mix(col, rimc_, np.clip(np.exp(-((d - 1.2 * sc) / (1.3 * sc + .35)) ** 2) * (.6 + .25 * np.clip(-lamb, 0, 1)), 0, .9))
+    lx, ly = c + math.cos(light) * R * .4, c + math.sin(light) * R * .4
+    sheen = np.exp(-(((xx - lx) / (R * .6)) ** 2 + ((yy - ly) / (R * .45)) ** 2))
+    col = col + (sheen * .05)[..., None] * C(220, 255, 235)
+    if not center_drop:   # small pale centre point (petiole)
+        cd = np.exp(-(rho / max(1.2, .028 * R)) ** 2)
+        col = mix(col, mix(c2, C(240, 248, 220), .6), cd * .85)
+    col = np.clip(col, 0, 1)
+
+    drops = []
+    if center_drop:
+        drops.append((c, c, R * .095))
+    tries = 0
+    while len(drops) < n_drops + (1 if center_drop else 0) and tries < 2000:
+        tries += 1
+        pr = R * (.011 + .050 * rng.random() ** 2.2)
+        if n_drops >= 12 and len(drops) < 3 + (1 if center_drop else 0):
+            pr = R * rng.uniform(.06, .08)
+        pr = max(pr, 2.2)
+        rr = R * math.sqrt(rng.uniform(.03, .72)); a = rng.uniform(0, 2 * np.pi)
+        if notch is not None and abs(wrap(a - notch)) < .35:
+            continue
+        px, py = c + rr * math.cos(a), c + rr * math.sin(a)
+        if rr + pr > float(redge_f(a)) * .88 or any(math.hypot(px - qx, py - qy) < (pr + qr) * 1.5 for qx, qy, qr in drops):
+            continue
+        drops.append((px, py, pr))
+    for px, py, pr in drops:
+        draw_droplet(col, xx, yy, px, py, pr, light, sc, 1.0, rim_col=groove_c)
+
+    out = np.zeros((N, N, 4), F32)
+    out[..., :3] = np.clip(col, 0, 1) * cov[..., None]
+    out[..., 3] = cov
+    return out
+
+
+# ---------------------------------------------------------------- V3 layout
+V3_W, V3_H = 1600, 900
+V3_OPEN_C, V3_OPEN_R = (790, 455), (470, 265)      # open water ellipse (final px)
+V3_ISLAND = (1000, 470)
+
+
+def v3_layout(seed=4):
+    """Crowded pads along edges/corners + a small island; returns [(x, y, r)] final px,
+    largest first (drawn first = lowest)."""
+    rng = np.random.default_rng(seed)
+    pads = []
+    def open_q(x, y):
+        return math.hypot((x - V3_OPEN_C[0]) / V3_OPEN_R[0], (y - V3_OPEN_C[1]) / V3_OPEN_R[1])
+    tries = 0
+    while len(pads) < 84 and tries < 40000:
+        tries += 1
+        x, y = rng.uniform(-40, V3_W + 40), rng.uniform(-40, V3_H + 40)
+        q = open_q(x, y)
+        if q < 1.0:
+            continue
+        # density rises toward the edges; corners densest
+        if rng.random() > smooth(.98, 1.35, q) * .92 + .08:
+            continue
+        u = rng.random()
+        r = 26 + 100 * u ** 2.2
+        r *= .8 + .35 * smooth(1.0, 2.0, q)            # bigger leaves further from the open water
+        r = min(r, (q - 1.0) * 260 + 40)                # keep the open-water rim made of smaller leaves
+        if any(math.hypot(x - px, y - py) < .50 * (r + pr) for px, py, pr in pads):
+            continue
+        pads.append((x, y, r))
+    # island cluster in the open water
+    ix, iy = V3_ISLAND
+    for (ox, oy, r) in [(0, 0, 54), (62, -28, 40), (-50, 34, 36), (30, 52, 30), (-18, -54, 26), (78, 30, 22)]:
+        pads.append((ix + ox, iy + oy, r))
+    pads.sort(key=lambda p: -p[2])
+    return pads
+
+V3_OPEN = (300, 740, 196)
+V3_HALF = (1330, 175, 132)
+V3_BUDS = [(1062, 395, 58, 40), (205, 260, 62, -30), (1395, 720, 60, 160)]
+V3_FISH = [  # cx, cy, length, heading, pattern, bend
+    (640, 360, 160, 15, 'kohaku', .08),
+    (930, 600, 150, 195, 'orenji', -.08),
+    (520, 560, 140, -30, 'sanke', .06),
+    (1150, 330, 120, 140, 'hi', .10),
+    ('rim', 176, 1.22, 170, 'kohaku', -.06),   # head under the left pile
+    ('rim', 22, 1.08, 150, 'orenji', .07),     # nose under the right pile
+    ('rim', -52, 1.2, 130, 'sanke', -.09),    # heading up under the top pads
+    (1000, 700, 110, 10, 'hi', .05),
+]
+V3_RIPPLES = [(1000, 470, 150), (600, 420, 60)]
+
+
+def ripple(cv, x, y, r, S):
+    H, W = cv.h, cv.w
+    R_ = r * S
+    x0, x1 = int(max(0, x * S - R_ - 20)), int(min(W, x * S + R_ + 20))
+    y0, y1 = int(max(0, y * S - R_ - 20)), int(min(H, y * S + R_ + 20))
+    yy, xx = np.mgrid[y0:y1, x0:x1].astype(F32)
+    dd = np.hypot(xx - x * S, yy - y * S)
+    v = np.zeros_like(dd)
+    for k, rr in enumerate([R_ * .55, R_ * .78, R_]):
+        v += np.exp(-((dd - rr) / (1.6 * S)) ** 2) * (1 - k * .25)
+    cv.a[y0:y1, x0:x1, :3] += (v * .10)[..., None] * C(220, 255, 240)
+
+
+def local_shadow(cv, t, y0, x0, dy, dx, sigma, alpha, mask=None, invert=False):
+    """Darken canvas under a blurred, offset copy of sprite alpha (bbox only)."""
+    h, w = t.shape[:2]
+    padp = int(sigma * 3) + 2
+    a = np.pad(t[..., 3], padp)
+    a = gaussian_filter(a, sigma)
+    Y0, X0 = y0 + dy - padp, x0 + dx - padp
+    Y1, X1 = Y0 + a.shape[0], X0 + a.shape[1]
+    ya, xa, yb, xb = max(0, Y0), max(0, X0), min(cv.h, Y1), min(cv.w, X1)
+    if ya >= yb or xa >= xb:
+        return
+    s = a[ya - Y0:yb - Y0, xa - X0:xb - X0] * alpha
+    if mask is not None:
+        m = mask[ya:yb, xa:xb]
+        s = s * ((1 - m) if invert else m)
+    cv.a[ya:yb, xa:xb, :3] *= (1 - s)[..., None]
+
+
+def render_v3(fast=False):
+    import time
+    t0 = time.time()
+    S = SS
+    W, H = V3_W * S, V3_H * S
+    shape = (H, W)
+    floor, dmap = pond_floor(W, H, ws=S * 2.0, seed=11)
+    cv = floor
+    off = SHADOW_OFF * S
+    rng = np.random.default_rng(12)
+    # deeper, bluer open water in the middle (ref 2), shallower/greener under the piles
+    yy, xx = np.mgrid[0:H, 0:W].astype(F32)
+    q = np.hypot((xx / S - V3_OPEN_C[0]) / V3_OPEN_R[0], (yy / S - V3_OPEN_C[1]) / V3_OPEN_R[1])
+    dmap = np.clip(dmap * .6 + .45 * (1 - smooth(.3, 1.3, q)), 0, 1)
+    del yy, xx
+
+    fish, fsh = [], np.zeros(shape, F32)
+    for j, (x, y, Lf, hd, pat, bend) in enumerate(V3_FISH):
+        if x == 'rim':     # ('rim', angle on the open-water ellipse, q, length, pattern, bend): swims outward under the pads
+            a = math.radians(y); qq = Lf; Lf = hd
+            x = V3_OPEN_C[0] + qq * V3_OPEN_R[0] * math.cos(a)
+            y = V3_OPEN_C[1] + qq * V3_OPEN_R[1] * math.sin(a)
+            hd = math.degrees(math.atan2(-V3_OPEN_R[1] * math.sin(a), V3_OPEN_R[0] * math.cos(a)))
+        tex, sil = koi(Lf * S, pat, 700 + j, bend)
+        ts = rotate_premul(np.dstack([np.zeros(sil.shape + (3,), F32), sil]), hd)
+        h, w = ts.shape[:2]
+        y0, x0 = int(round(y * S - h / 2)), int(round(x * S - w / 2))
+        fsh = np.maximum(fsh, stamp_alpha(shape, ts, y0, x0, int(off[1] * .55), int(off[0] * .55)))
+        fish.append((tex, x * S, y * S, hd))
+    cv.a[..., :3] *= (1 - .40 * gaussian_filter(fsh, 6 * S))[..., None]
+    water_over(cv, dmap)
+    veil = mix(C(0x71, 0xE6, 0xC2), C(0x1A, 0x59, 0x52), .55)
+    for tex, x, y, hd in fish:
+        t = rotate_premul(tex, hd)
+        t[..., :3] = t[..., :3] * .82 + veil * .18 * t[..., 3:]
+        h, w = t.shape[:2]
+        cv.over_premul(t, int(round(y - h / 2)), int(round(x - w / 2)))
+    for (x, y, r) in V3_RIPPLES:
+        ripple(cv, x, y, r, S)
+    for j, (x, y, sz) in enumerate([(700, 640, 46), (860, 300, 40), (1180, 480, 36)]):
+        t = after_duckweed(int(sz * S), 90 + j)
+        local_shadow(cv, t, int(y * S - t.shape[0] / 2), int(x * S - t.shape[1] / 2), int(off[1] * .8), int(off[0] * .8), 4 * S, .35)
+        place(cv, t, x * S, y * S, float(rng.uniform(0, 360)))
+    t1 = time.time()
+
+    # ---- pads, largest first; each casts a short sharp shadow onto lower pads and a
+    #      longer soft one onto the water/floor/fish
+    pad_alpha = np.zeros(shape, F32)
+    layout = v3_layout()
+    for i, (x, y, r) in enumerate(layout):
+        p = random_pad_params(rng, r)
+        N = int(round(2 * r * S / .92))
+        t = pad_v3(N, **p)
+        h, w = t.shape[:2]
+        y0, x0 = int(round(y * S - h / 2)), int(round(x * S - w / 2))
+        local_shadow(cv, t, y0, x0, int(off[1]), int(off[0]), 6 * S, .48, pad_alpha, invert=True)
+        local_shadow(cv, t, y0, x0, int(off[1] * .35), int(off[0] * .35), 3 * S, .42, pad_alpha)
+        # meniscus ring on the water
+        local_shadow(cv, t, y0, x0, 0, 0, 2.5 * S, .22, pad_alpha, invert=True)
+        cv.over_premul(t, y0, x0)
+        ya, xa = max(0, y0), max(0, x0)
+        yb, xb = min(H, y0 + h), min(W, x0 + w)
+        if ya < yb and xa < xb:
+            pad_alpha[ya:yb, xa:xb] = np.maximum(pad_alpha[ya:yb, xa:xb], t[ya - y0:yb - y0, xa - x0:xb - x0, 3])
+    t2 = time.time()
+
+    # ---- flowers among the pads
+    fl = [(after_lotus_open(int(V3_OPEN[2] * S), 20), V3_OPEN[0] * S, V3_OPEN[1] * S, 10, 1.55),
+          (after_lotus_half(int(V3_HALF[2] * S), 21), V3_HALF[0] * S, V3_HALF[1] * S, 20, 1.55)]
+    for j, (x, y, sz, deg) in enumerate(V3_BUDS):
+        fl.append((after_bud(int(sz * S), 22 + j), x * S, y * S, deg, 1.9))
+    for tex, x, y, deg, k in fl:
+        t = rotate_premul(tex, deg)
+        h, w = t.shape[:2]
+        y0, x0 = int(round(y - h / 2)), int(round(x - w / 2))
+        local_shadow(cv, t, y0, x0, int(off[1] * k), int(off[0] * k), 7 * S * k, .40, pad_alpha, invert=True)
+        local_shadow(cv, t, y0, x0, int(off[1] * .55), int(off[0] * .55), 5 * S, .38, pad_alpha)
+        cv.over_premul(t, y0, x0)
+
+    rgb = np.clip(cv.a[..., :3], 0, 1)
+    big = Image.fromarray((rgb * 255 + .5).astype(np.uint8), 'RGB')
+    big.resize((V3_W, V3_H), Image.LANCZOS).save(os.path.join(OUT_DIR, 'lotus_after_v3.png'))
+    cx, cy = 210 * S, 690 * S      # crowded bottom-left pile around the open lotus
+    big.crop((cx - 400, cy - 400, cx + 400, cy + 400)).save(os.path.join(OUT_DIR, 'lotus_cluster_closeup.png'))
+    print(f'v3 ok: {len(layout)} pads; floor+fish {t1 - t0:.1f}s, pads {t2 - t1:.1f}s, total {time.time() - t0:.1f}s')
+
+
 def main_compare():
     before = render_half(False)
     after = render_half(True)
@@ -1252,5 +1619,7 @@ if __name__ == '__main__':
     import sys
     if 'compare' in sys.argv[1:]:
         main_compare()      # v1 before/after comparison
+    elif 'v2' in sys.argv[1:]:
+        render_v2()         # v2: 10 mint pads
     else:
-        render_v2()
+        render_v3()         # v3: irregular leaves, crowded edges

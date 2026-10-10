@@ -898,14 +898,24 @@ final class LilyBank: @unchecked Sendable {
                 jobs.append((cls, N, 2 * rF * 2 / 0.92, p))
             }
         }
-        // Guarantee some variety in a small pool: one young reddish leaf and one or
-        // two yellowed old ones (≈4% / ≈7% of the pads on screen).
-        if !jobs.contains(where: { $0.p.kind == .young }) {
-            let i = LilyBank.classCount[0] + 1
-            jobs[i].p.kind = .young; jobs[i].p.old = false
+        // A pool of 24 is too small to trust plain random draws (one unlucky launch got
+        // four reddish leaves), so assign the mockup's palette mix by quota instead:
+        // ≈22% yellow-green, 30% fresh, 23% mint, 20% blue-green, exactly one young
+        // reddish leaf (≈4%) and two yellowed old ones (≈7%), shuffled over the classes.
+        var kinds: [PadKind] = []
+        for (k, n) in [(PadKind.yellowgreen, 5), (.fresh, 7), (.mint, 6), (.blue, 5)] {
+            for _ in 0..<n { kinds.append(k) }
         }
-        if jobs.filter({ $0.p.old }).count < 2 {
-            for i in [2, LilyBank.classCount[0] + 4] where jobs[i].p.kind != .young { jobs[i].p.old = true }
+        while kinds.count < jobs.count - 1 { kinds.append(.fresh) }
+        for i in stride(from: kinds.count - 1, to: 0, by: -1) { kinds.swapAt(i, master.i(0, i + 1)) }
+        let youngAt = master.i(LilyBank.classCount[0] / 2, LilyBank.classCount[0] + LilyBank.classCount[1])
+        kinds.insert(.young, at: youngAt)
+        for i in jobs.indices { jobs[i].p.kind = kinds[i]; jobs[i].p.old = false }
+        var olds = 0, guardN = 0
+        while olds < 2 && guardN < 100 {
+            guardN += 1
+            let i = master.i(0, LilyBank.classCount[0] + LilyBank.classCount[1])
+            if jobs[i].p.kind != .young && !jobs[i].p.old { jobs[i].p.old = true; olds += 1 }
         }
         let flowerSeeds = (0..<6).map { _ in master.next() }
         let total = jobs.count + 6
