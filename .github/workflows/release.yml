@@ -86,6 +86,12 @@ jobs:
 
           之后就可以像普通 App 一样正常双击打开了。程序启动后在屏幕右上角菜单栏找小鱼图标 🐟。
           NOTES
+          # Optional per-version changelog: release-notes/<tag>.md is inserted after the title.
+          EXTRA="release-notes/${GITHUB_REF_NAME}.md"
+          if [[ -f "$EXTRA" ]]; then
+            { head -n 2 "$RUNNER_TEMP/notes.md"; cat "$EXTRA"; echo; tail -n +3 "$RUNNER_TEMP/notes.md"; } > "$RUNNER_TEMP/notes2.md"
+            mv "$RUNNER_TEMP/notes2.md" "$RUNNER_TEMP/notes.md"
+          fi
           cat "$RUNNER_TEMP/notes.md"
 
       - name: Create / update GitHub Release

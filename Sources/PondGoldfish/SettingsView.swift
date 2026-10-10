@@ -150,20 +150,33 @@ struct SettingsView: View {
     }
 }
 
+/// Borderless-looking titled window for the settings panel. The SwiftUI card fills
+/// the whole window (including the transparent titlebar), so the traffic-light
+/// buttons sit on top of the card's top-left corner.
+final class SettingsPanelWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+    /// Esc → close.
+    override func cancelOperation(_ sender: Any?) { performClose(sender) }
+}
+
 /// Hosts the SwiftUI panel in a transparent, floating, draggable window.
+/// Hidden by default; only shown from “设置…” (status item / app menu).
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
-    private var window: NSWindow?
+    private var window: SettingsPanelWindow?
+    private var keyMonitor: Any?
     var onToggleMode: () -> Void = {}
 
     func show() {
         if window == nil {
             let view = SettingsView(s: PondSettings.shared, onToggleMode: { [weak self] in self?.onToggleMode() })
+                .ignoresSafeArea()
             let host = NSHostingView(rootView: view)
             let size = host.fittingSize
-            let w = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                             styleMask: [.titled, .closable, .fullSizeContentView],
-                             backing: .buffered, defer: false)
+            let w = SettingsPanelWindow(contentRect: NSRect(origin: .zero, size: size),
+                                        styleMask: [.titled, .closable, .fullSizeContentView],
+                                        backing: .buffered, defer: false)
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
             w.isMovableByWindowBackground = true
@@ -172,11 +185,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             w.hasShadow = true
             w.level = .floating
             w.isReleasedWhenClosed = false
+            w.isRestorable = false
             w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             w.appearance = NSAppearance(named: .darkAqua)
             w.title = "池塘金鱼设置"
             w.contentView = host
             w.setContentSize(size)
+            // Only close makes sense for this fixed-size panel.
+            w.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            w.standardWindowButton(.zoomButton)?.isHidden = true
             if let screen = NSScreen.main {
                 let vf = screen.visibleFrame
                 w.setFrameOrigin(NSPoint(x: vf.maxX - size.width - 40, y: vf.maxY - size.height - 40))
@@ -186,7 +203,41 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             w.delegate = self
             window = w
         }
+        installKeyMonitor()
+        // LSUIElement / accessory app: cooperative NSApp.activate() may not make us
+        // active, which leaves the panel non-key (greyed controls, dead traffic lights).
+        NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        window?.orderFrontRegardless()
+    }
+
+    func close() {
+        window?.performClose(nil)
+    }
+
+    /// ⌘W and Esc close the panel even when the app has no visible main menu
+    /// (accessory mode) and regardless of which SwiftUI control has focus.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, let w = self.window, w.isKeyWindow else { return event }
+                let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                let isCmdW = mods == .command && event.charactersIgnoringModifiers?.lowercased() == "w"
+                let isEsc = event.keyCode == 53 && mods.isDisjoint(with: [.command, .option, .control])
+                if isCmdW || isEsc {
+                    w.performClose(nil)
+                    return nil
+                }
+                return event
+            }
+        }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool { true }
+
+    func windowWillClose(_ notification: Notification) {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
     }
 }

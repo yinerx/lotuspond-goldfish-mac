@@ -44,18 +44,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         timer = Timer.scheduledTimer(timeInterval: 2.0, target: self, selector: #selector(periodic(_:)), userInfo: nil, repeats: true)
         periodic(nil)
 
-        // First launch: show the settings once so the user discovers the panel.
-        if !UserDefaults.standard.bool(forKey: "pond.didLaunchBefore") {
-            UserDefaults.standard.set(true, forKey: "pond.didLaunchBefore")
-            settingsWindow.show()
-        }
+        // The settings panel stays hidden until the user picks “设置…”.
 
         UpdateChecker.shared.checkAtLaunchIfNeeded()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !settings.wallpaperMode { pond.showWindow() } else { settingsWindow.show() }
-        return true
+        if !settings.wallpaperMode { pond.showWindow() }
+        return false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

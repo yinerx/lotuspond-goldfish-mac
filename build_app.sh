@@ -6,7 +6,8 @@ cd "$(dirname "$0")"
 APP_NAME="池塘金鱼"
 EXEC_NAME="PondGoldfish"
 BUNDLE_ID="com.yiner.pondgoldfish"
-VERSION="0.0.1"   # 唯一版本号来源（CFBundleShortVersionString）；代码里 swift run 时回退到 AppInfo.fallbackVersion
+VERSION="0.0.2"   # 唯一版本号来源（CFBundleShortVersionString）；代码里 swift run 时回退到 AppInfo.fallbackVersion
+BUILD_NUMBER="2"   # CFBundleVersion
 
 if ! command -v swift >/dev/null 2>&1; then
   echo "❌ 没找到 swift。请先安装 Xcode，或在终端运行：xcode-select --install" >&2
@@ -50,7 +51,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key>
     <string>${VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${BUILD_NUMBER}</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
