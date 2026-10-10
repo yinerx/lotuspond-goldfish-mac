@@ -29,6 +29,23 @@ jobs:
       - name: Build app
         run: bash build_app.sh
 
+      - name: Lily pad preview render (smoke test)
+        continue-on-error: true
+        run: |
+          BIN="build/池塘金鱼.app/Contents/MacOS/PondGoldfish"
+          mkdir -p "$RUNNER_TEMP/preview"
+          "$BIN" --render-lily-preview "$RUNNER_TEMP/preview/lily_1600x900.png" 1600 900 1
+          "$BIN" --render-lily-preview "$RUNNER_TEMP/preview/lily_5k.png" 2560 1440 1.6
+          ls -la "$RUNNER_TEMP/preview"
+
+      - name: Upload preview
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: lily-preview
+          path: ${{ runner.temp }}/preview/*.png
+          if-no-files-found: warn
+
       - name: Determine version
         id: ver
         run: |
