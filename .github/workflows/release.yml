@@ -86,7 +86,6 @@ jobs:
 
           之后就可以像普通 App 一样正常双击打开了。程序启动后在屏幕右上角菜单栏找小鱼图标 🐟。
           NOTES
-          sed -i '' 's/^          //' "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 
       - name: Create / update GitHub Release

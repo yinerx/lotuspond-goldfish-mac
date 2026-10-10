@@ -51,6 +51,7 @@ open "build/池塘金鱼.app"
 | 暂停动画 / 继续动画 | 暂停或继续渲染 |
 | 落下一片叶子 / 花瓣 | 立刻触发一次落叶 / 落花（想马上看效果时用） |
 | 下雨 | 开关下雨 |
+| 检查更新… | 去 GitHub Releases 查看有没有新版本 |
 | 退出 | 退出程序 |
 
 ### 切换到桌面壁纸模式
@@ -72,6 +73,7 @@ open "build/池塘金鱼.app"
 | 开启花瓣 / 开启落叶 / 下雨 | 事件开关 |
 | 鱼的数量 | 5～30 条 |
 | 帧率 / 使用电池时降低帧率 | 30 / 60 / 120 fps；用电池或开了低电量模式时自动降到 30fps |
+| 自动检查更新 | 默认开启：启动时每天最多悄悄检查一次，有新版本才弹窗 |
 
 所有设置都自动保存（UserDefaults），重启后保留。
 
@@ -81,9 +83,24 @@ open "build/池塘金鱼.app"
 - 窗口模式下，池塘窗口被完全挡住或最小化时也会暂停；
 - 使用电池时可自动降到 30fps。
 
+### 检查更新
+
+菜单栏小鱼 → **检查更新…**（或设置面板里的“检查更新…”按钮）会查询本仓库 GitHub Releases 的最新版本，和当前版本（`CFBundleShortVersionString`，由 `build_app.sh` 写入）比较：
+
+- 有新版本时弹窗显示版本号和更新说明，可选 **下载新版本**（打开 .dmg 下载链接）/ **稍后** / **跳过这个版本**（自动检查时不再提醒这个版本）；
+- 已是最新时提示“已经是最新版本（x.y.z）”；网络出错时提示检查失败。
+
+设置面板里的 **自动检查更新**（默认开启）会在启动时每天最多检查一次，只有发现新版本才会弹窗。
+
+## 下载安装（Release）
+
+在 [Releases](https://github.com/yinerx/lotuspond-goldfish-mac/releases) 下载 `LotusPondGoldfish-x.y.z.dmg`，打开后把「池塘金鱼」拖进「应用程序」。因为只做了 ad-hoc 签名、没有 Apple 公证，第一次打开请 **右键 → 打开**（或到 系统设置 → 隐私与安全性 → 仍要打开）；仍打不开时可以在终端执行 `xattr -dr com.apple.quarantine "/Applications/池塘金鱼.app"`。
+
+推送 `v*` 标签时，GitHub Actions（`.github/workflows/release.yml`）会自动编译、打包 DMG 并发布 Release。
+
 ## 已知限制
 
-- 在 Linux 环境下写成，**没有在真机上编译运行过**；如果 Xcode 报错，多半是很小的 API 差异，欢迎把报错发给我修。
+- 在 Linux 环境下写成；已经在 GitHub Actions 的 macOS 上编译通过（Xcode 26 / Swift 6.2），但**还没有在真机上运行验证过画面效果**，如有问题欢迎反馈。
 - 桌面壁纸模式用的是“放在桌面层的窗口”，不是替换系统壁纸：系统设置里的壁纸不会改变；如果 macOS 的“点按墙纸以显示桌面”、台前调度等功能开启，可能会把它和其它窗口一起移开。
 - 少数系统版本里桌面层窗口可能出现在系统壁纸下面（看不到池塘）。这种情况请告诉我，可以把窗口层级调高一级（`PondWindowManager.swift` 里的 `.desktopWindow` 改成 `+1`）。
 - 壁纸模式下不能点击水面（鼠标穿透给桌面图标）；点水互动只在窗口模式下有效。
@@ -108,5 +125,6 @@ Sources/PondGoldfish/
 ├── Painter.swift             Core Graphics / Core Image 绘图小工具
 ├── Shaders.swift             SKShader：焦散 + 折射抖动、深水雾、水面闪光
 ├── SunModel.swift            太阳高度角/方位角计算（NOAA 公式）→ 光照参数
+├── UpdateChecker.swift       检查更新（GitHub Releases）+ 版本号比较
 └── Utils.swift               向量、颜色、随机数
 ```

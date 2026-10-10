@@ -27,6 +27,7 @@ final class PondSettings: ObservableObject {
         static let reduceOnBattery = "pond.reduceOnBattery"
         static let wallpaperMode = "pond.wallpaperMode"
         static let latitude = "pond.latitude"
+        static let autoCheckUpdates = "pond.autoCheckUpdates"
     }
 
     private static let defaults: [String: Any] = [
@@ -44,7 +45,8 @@ final class PondSettings: ObservableObject {
         K.fps: 60,
         K.reduceOnBattery: true,
         K.wallpaperMode: false,
-        K.latitude: 31.2
+        K.latitude: 31.2,
+        K.autoCheckUpdates: true
     ]
 
     /// 水色 (hex, e.g. #71E6C2)
@@ -77,6 +79,8 @@ final class PondSettings: ObservableObject {
     @Published var wallpaperMode: Bool { didSet { ud.set(wallpaperMode, forKey: K.wallpaperMode) } }
     /// Latitude used for the sun position (longitude is derived from the time zone).
     @Published var latitude: Double { didSet { ud.set(latitude, forKey: K.latitude) } }
+    /// 自动检查更新（启动时，每天最多一次）
+    @Published var autoCheckUpdates: Bool { didSet { ud.set(autoCheckUpdates, forKey: K.autoCheckUpdates) } }
 
     init() {
         ud.register(defaults: Self.defaults)
@@ -96,6 +100,7 @@ final class PondSettings: ObservableObject {
         reduceOnBattery = ud.bool(forKey: K.reduceOnBattery)
         wallpaperMode = ud.bool(forKey: K.wallpaperMode)
         latitude = ud.double(forKey: K.latitude)
+        autoCheckUpdates = ud.bool(forKey: K.autoCheckUpdates)
     }
 
     var waterColor: RGB { RGB(hex: waterHex) }

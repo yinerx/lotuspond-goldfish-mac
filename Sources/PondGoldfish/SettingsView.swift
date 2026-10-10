@@ -65,6 +65,16 @@ struct SettingsView: View {
                 Toggle("使用电池时降低帧率", isOn: $s.reduceOnBattery).toggleStyle(.switch)
             }
 
+            group("更新") {
+                Toggle("自动检查更新", isOn: $s.autoCheckUpdates).toggleStyle(.switch)
+                HStack {
+                    Text("当前版本 \(AppInfo.version)")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("检查更新…") { UpdateChecker.shared.checkManually() }
+                }
+            }
+
             HStack {
                 Button("恢复默认") { s.resetToDefaults() }
                 Spacer()

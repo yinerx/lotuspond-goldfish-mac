@@ -49,6 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             UserDefaults.standard.set(true, forKey: "pond.didLaunchBefore")
             settingsWindow.show()
         }
+
+        UpdateChecker.shared.checkAtLaunchIfNeeded()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -67,6 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appMenu = NSMenu(title: "池塘金鱼")
         let settingsItem = appMenu.addItem(withTitle: "设置…", action: #selector(openSettings(_:)), keyEquivalent: ",")
         settingsItem.target = self
+        let updateItem = appMenu.addItem(withTitle: "检查更新…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        updateItem.target = self
         let modeItem = appMenu.addItem(withTitle: "切换模式", action: #selector(toggleModeAction(_:)), keyEquivalent: "m")
         modeItem.keyEquivalentModifierMask = [.command, .shift]
         modeItem.target = self
@@ -129,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let rain = add(menu, "下雨", #selector(toggleRain(_:)))
         rain.state = settings.rainEnabled ? .on : .off
         menu.addItem(.separator())
+        add(menu, "检查更新…", #selector(checkForUpdates(_:)))
         add(menu, "退出", #selector(quit(_:)), key: "q")
     }
 
@@ -165,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func dropPetal(_ sender: Any?) { pond.scenes.randomElement()?.dropPetal() }
     @objc private func toggleRain(_ sender: Any?) { settings.rainEnabled.toggle() }
     @objc private func quit(_ sender: Any?) { NSApp.terminate(nil) }
+    @objc private func checkForUpdates(_ sender: Any?) { UpdateChecker.shared.checkManually() }
 
     private func applyActivationPolicy() {
         // Wallpaper mode: menu-bar only (no Dock icon). Window mode: a regular app.
