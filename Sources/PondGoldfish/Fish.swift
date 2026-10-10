@@ -46,6 +46,10 @@ final class Fish {
     var turnSignal: Double = 0
 
     var fade: Double = 0        // 0…1, for spawning / removal
+    // Lily pads: fish may hide in the shade, but not for ever.
+    var hiddenTime = 0.0
+    var hideLimit = rnd(5, 14)
+    var seekingOpen = false
     var removing = false
 
     /// Midpoint of the body, used for neighbour logic.
@@ -122,7 +126,11 @@ final class Fish {
 
     // MARK: - Steering
 
-    func think(dt: Double, time: Double, school: [Fish], bounds: V2, margin: Double) {
+    /// - Parameters:
+    ///   - cover: 0 (open water) … 1 (under a lily pad) at the head.
+    ///   - openCenter: middle of the open water, used to come back out of hiding.
+    func think(dt: Double, time: Double, school: [Fish], bounds: V2, margin: Double,
+               cover: Double = 0, openCenter: V2? = nil) {
         stateTime -= dt
         var desired = V2.dir(wanderHeading)
         var targetSpeed = cruise * (0.78 + 0.32 * sin(time * speedFreq * 2 * Double.pi + speedSeed))
@@ -233,6 +241,27 @@ final class Fish {
                 desired += (coh / n - c).normalized * 0.12 * social
             }
         }
+
+        // Shade under lily pads: no avoidance — fish swim under the pads and like to
+        // linger there a little (slower), but after a while they head back out to the
+        // open water, so most fish are visible most of the time.
+        if cover > 0.5 { hiddenTime += dt } else { hiddenTime = max(0, hiddenTime - dt * 0.5) }
+        if state == .wander || state == .pause || state == .regroup {
+            if cover > 0.5 && !seekingOpen { targetSpeed *= 0.8 }
+            if hiddenTime > hideLimit { seekingOpen = true }
+            if seekingOpen, let oc = openCenter {
+                let to = (oc - head).normalized
+                desired += to * 1.6
+                let k = min(1, dt * 1.5)
+                wanderHeading += wrapAngle(to.angle - wanderHeading) * k
+                if state == .pause { state = .wander }
+                if cover < 0.05 && hiddenTime < 1 {
+                    seekingOpen = false
+                    hideLimit = rnd(5, 14)
+                }
+            }
+        }
+        if seekingOpen && cover < 0.05 { hiddenTime = max(0, hiddenTime - dt * 2) }
 
         // Edge avoidance (soft wall), stronger the closer we are.
         let p = head

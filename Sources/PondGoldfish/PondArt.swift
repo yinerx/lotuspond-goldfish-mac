@@ -253,129 +253,7 @@ enum PondArt {
         return Painter.texture(Painter.blurred(img, radius: 4))
     }
 
-    // MARK: - Surface decor
-
-    static func lilyPad(variant: Int) -> SKTexture {
-        let S = 256.0
-        let img = Painter.image(pw: 256, ph: 256) { ctx in
-            let c = V2(S / 2, S / 2)
-            let r = S * 0.47
-            let notch = rnd(0, 2 * Double.pi)
-            let half = 0.16
-            let path = CGMutablePath()
-            path.move(to: c.cg)
-            path.addArc(center: c.cg, radius: CGFloat(r), startAngle: CGFloat(notch + half),
-                        endAngle: CGFloat(notch - half + 2 * Double.pi), clockwise: false)
-            path.closeSubpath()
-
-            let palettes: [(RGB, RGB, RGB)] = [
-                (.bytes(128, 186, 76), .bytes(70, 150, 60), .bytes(44, 112, 50)),
-                (.bytes(150, 194, 84), .bytes(88, 160, 66), .bytes(58, 124, 52)),
-                (.bytes(118, 172, 80), .bytes(64, 136, 64), .bytes(120, 96, 52))
-            ]
-            let (inner, mid, edge) = palettes[variant % palettes.count]
-
-            ctx.saveGState()
-            ctx.addPath(path)
-            ctx.clip()
-            let g = Painter.gradient([inner.cg(), mid.cg(), edge.cg()], [0, 0.6, 1])
-            ctx.drawRadialGradient(g, startCenter: c.cg, startRadius: 0, endCenter: c.cg, endRadius: CGFloat(r), options: [.drawsAfterEndLocation])
-            // painterly mottling
-            for _ in 0..<70 {
-                let p = c + V2.dir(rnd(0, 6.28)) * (r * sqrt(rnd(0, 1)))
-                let col = chance(0.5) ? inner.scaled(1.08) : mid.scaled(0.9)
-                Painter.fillEllipse(ctx, center: p, rx: rnd(4, 14), ry: rnd(3, 8), angle: rnd(0, 3.14), col.cg(rnd(0.10, 0.25)))
-            }
-            // radial veins
-            ctx.setLineCap(.round)
-            for i in 0..<22 {
-                let a = notch + half + Double(i) / 22 * (2 * Double.pi - 2 * half) + 0.05
-                let p0 = c + V2.dir(a) * (r * 0.06)
-                let p1 = c + V2.dir(a + rnd(-0.04, 0.04)) * (r * 0.96)
-                ctx.move(to: p0.cg)
-                ctx.addLine(to: p1.cg)
-                ctx.setStrokeColor(inner.scaled(1.15).cg(0.30))
-                ctx.setLineWidth(CGFloat(rnd(1.2, 2.2)))
-                ctx.strokePath()
-            }
-            // rim
-            ctx.addPath(path)
-            ctx.setStrokeColor(edge.scaled(0.8).cg(0.7))
-            ctx.setLineWidth(5)
-            ctx.strokePath()
-            ctx.restoreGState()
-            // specular wet highlight
-            Painter.fillEllipse(ctx, center: c + V2(-0.25, 0.3) * r, rx: r * 0.28, ry: r * 0.12, angle: 0.6, rgba(255, 255, 240, 0.12))
-            Painter.fillCircle(ctx, c, 3.5, edge.cg(0.6))
-        }
-        return Painter.texture(img)
-    }
-
-    static func lotus(variant: Int) -> SKTexture {
-        let S = 256.0
-        let img = Painter.image(pw: 256, ph: 256) { ctx in
-            let c = V2(S / 2, S / 2)
-            let deep = variant % 2 == 0 ? RGB.bytes(236, 104, 156) : RGB.bytes(242, 128, 170)
-            let pale = RGB.bytes(252, 226, 234)
-            let layers: [(count: Int, len: Double, wid: Double, rot: Double)] = [
-                (9, S * 0.47, S * 0.17, 0.0),
-                (8, S * 0.38, S * 0.15, 0.35),
-                (6, S * 0.27, S * 0.13, 0.15),
-                (5, S * 0.17, S * 0.10, 0.6)
-            ]
-            for (li, layer) in layers.enumerated() {
-                for i in 0..<layer.count {
-                    let a = layer.rot + Double(i) / Double(layer.count) * 2 * Double.pi + rnd(-0.08, 0.08)
-                    let len = layer.len * rnd(0.92, 1.05)
-                    petal(ctx, center: c, angle: a, length: len, width: layer.wid,
-                          base: pale, tip: RGB.mix(deep, pale, Double(li) * 0.18))
-                }
-            }
-            // seed pod & stamens
-            for i in 0..<26 {
-                let a = Double(i) / 26 * 2 * Double.pi
-                Painter.fillCircle(ctx, c + V2.dir(a) * (S * 0.075), 3.2, rgba(250, 196, 60, 0.95))
-            }
-            Painter.fillCircle(ctx, c, S * 0.06, rgba(214, 214, 92))
-            Painter.fillCircle(ctx, c, S * 0.045, rgba(188, 196, 78))
-            for i in 0..<7 {
-                let a = Double(i) / 7 * 2 * Double.pi
-                Painter.fillCircle(ctx, c + V2.dir(a) * (S * 0.025), 2, rgba(130, 140, 50))
-            }
-        }
-        return Painter.texture(img)
-    }
-
-    private static func petal(_ ctx: CGContext, center c: V2, angle: Double, length: Double, width: Double, base: RGB, tip: RGB) {
-        ctx.saveGState()
-        ctx.translateBy(x: CGFloat(c.x), y: CGFloat(c.y))
-        ctx.rotate(by: CGFloat(angle))
-        let p = CGMutablePath()
-        p.move(to: CGPoint(x: 0, y: 0))
-        p.addCurve(to: CGPoint(x: length, y: 0), control1: CGPoint(x: length * 0.35, y: width * 0.95),
-                   control2: CGPoint(x: length * 0.85, y: width * 0.55))
-        p.addCurve(to: CGPoint(x: 0, y: 0), control1: CGPoint(x: length * 0.85, y: -width * 0.55),
-                   control2: CGPoint(x: length * 0.35, y: -width * 0.95))
-        p.closeSubpath()
-        // overlap shadow
-        ctx.saveGState()
-        ctx.setShadow(offset: .zero, blur: 6, color: rgba(90, 20, 50, 0.35))
-        ctx.addPath(p)
-        ctx.setFillColor(tip.cg())
-        ctx.fillPath()
-        ctx.restoreGState()
-        ctx.addPath(p)
-        ctx.clip()
-        let g = Painter.gradient([base.cg(), RGB.mix(base, tip, 0.55).cg(), tip.cg()], [0, 0.55, 1])
-        ctx.drawLinearGradient(g, start: .zero, end: CGPoint(x: length, y: 0), options: [])
-        // centre crease
-        ctx.move(to: CGPoint(x: length * 0.1, y: 0))
-        ctx.addLine(to: CGPoint(x: length * 0.9, y: 0))
-        ctx.setStrokeColor(rgba(255, 245, 250, 0.35))
-        ctx.setLineWidth(1.5)
-        ctx.strokePath()
-        ctx.restoreGState()
-    }
+    // MARK: - Surface decor (lily pads & lotus: see LilyArt.swift)
 
     /// Curled autumn leaf, pointing +x, 128×128.
     static func leaf(variant: Int) -> SKTexture {
@@ -542,8 +420,6 @@ enum PondArt {
 final class TextureBank {
     static let shared = TextureBank()
 
-    let pads: [SKTexture]
-    let lotuses: [SKTexture]
     let leaves: [SKTexture]
     let petals: [SKTexture]
     let duckweed: [SKTexture]
@@ -554,8 +430,6 @@ final class TextureBank {
     let white: SKTexture
 
     private init() {
-        pads = (0..<5).map { PondArt.lilyPad(variant: $0) }
-        lotuses = (0..<2).map { PondArt.lotus(variant: $0) }
         leaves = (0..<5).map { PondArt.leaf(variant: $0) }
         petals = (0..<2).map { PondArt.fallingPetal(variant: $0) }
         duckweed = (0..<6).map { _ in PondArt.duckweed() }

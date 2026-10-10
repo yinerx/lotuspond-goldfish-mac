@@ -306,11 +306,14 @@ enum LilyArt {
         let ph = (0..<6).map { _ in rng.r(0, 2 * .pi) }
 
         func redgeF(_ a: Double) -> Double {
-            var e = 1.0 / sqrt(pow(cos(a - p.aspectAng), 2) + pow(sin(a - p.aspectAng) / p.aspect, 2))
+            let ca: Double = cos(a - p.aspectAng), sa: Double = sin(a - p.aspectAng) / p.aspect
+            var e: Double = 1.0 / sqrt(ca * ca + sa * sa)
             let wk = Double(wrapF(Float(a - p.kidneyAng)))
             e *= 1 - p.kidney * exp(-pow(wk / 0.34, 2))
             let f = Double(p.waveFreq)
-            e *= 1 + p.waveAmp * sin(f * a + ph[0]) + p.waveAmp * 0.5 * sin(2.3 * f * a + ph[1]) + 0.004 * sin(17 * a + ph[2])
+            let w1: Double = p.waveAmp * sin(f * a + ph[0])
+            let w2: Double = p.waveAmp * 0.5 * sin(2.3 * f * a + ph[1])
+            e *= 1 + w1 + w2 + 0.004 * sin(17 * a + ph[2])
             return Rd * e
         }
         // Lookup table over the angle (the outline is evaluated for every pixel).
@@ -354,12 +357,23 @@ enum LilyArt {
         let edges: [Double]
         if p.notch != nil {
             let lo = 0.17, hi = 2 * Double.pi - 0.17
-            va = (0..<nveins).map { i in lo + (hi - lo) * Double(i) / Double(nveins - 1) + rng.r(-0.18, 0.18) * (hi - lo) / Double(nveins - 1) }
+            let step: Double = (hi - lo) / Double(nveins - 1)
+            va = []
+            for i in 0..<nveins {
+                let base: Double = lo + step * Double(i)
+                let jitter: Double = rng.r(-0.18, 0.18) * step
+                va.append(base + jitter)
+            }
             va.sort()
             edges = [0] + va + [2 * .pi]
         } else {
             let gap0 = 2 * Double.pi / Double(nveins)
-            va = (0..<nveins).map { i in fmod(Double(i) * gap0 + rng.r(-0.18, 0.18) * gap0 + 4 * .pi, 2 * .pi) }
+            va = []
+            for i in 0..<nveins {
+                let base: Double = Double(i) * gap0
+                let jitter: Double = rng.r(-0.18, 0.18) * gap0
+                va.append(fmod(base + jitter + 4 * Double.pi, 2 * Double.pi))
+            }
             va.sort()
             let v0 = va[0]
             va = va.map { $0 - v0 }
@@ -472,11 +486,16 @@ enum LilyArt {
                 var cc = t < 0.6 ? mixc(c0, c1, sm(0, 0.6, t)) : mixc(c1, c2, sm(0.6, 1, t))
                 if p.kind == .young { cc = mixc(cc, youngC, sm(0.2, 0.7, nl * 0.5 + 0.5) * 0.25) }
                 let lamb = (dx * cosL + dy * sinL) / R
-                cc *= 1 + 0.07 * lamb + 0.035 * nl + 0.025 * nm + 0.015 * nf
+                let lightK: Float = 1 + 0.07 * lamb + 0.035 * nl
+                cc *= lightK + 0.025 * nm + 0.015 * nf
                 let midA = (a0 + a1) / 2 + refF
-                var panel = 1 + (tilt[k] + 0.045 * cosf(midA - L) * sm(0.15, 0.7, t) - 0.05 * (1 - sqrtf(max(0, sinf(.pi * f))))) * vis
+                let pTilt: Float = 0.045 * cosf(midA - L) * sm(0.15, 0.7, t)
+                let pConc: Float = 0.05 * (1 - sqrtf(max(0, sinf(Float.pi * f))))
+                var panel: Float = 1 + (tilt[k] + pTilt - pConc) * vis
                 let cf = sm(0.06, 0.2, t)
-                panel = panel - 0.10 * vis * expf(-dNext / (9 * sc)) * nxt * cf + 0.05 * vis * expf(-dPrev / (7 * sc)) * prv * cf
+                let crease: Float = 0.10 * vis * expf(-dNext / (9 * sc)) * nxt * cf
+                let ridgeLit: Float = 0.05 * vis * expf(-dPrev / (7 * sc)) * prv * cf
+                panel = panel - crease + ridgeLit
                 cc *= panel
 
                 let vf = (1 - 0.35 * sm(0.85, 1.0, t)) * (0.45 + 0.55 * vis)
@@ -649,7 +668,8 @@ enum LilyArt {
                 if cv <= 0 { continue }
                 let s = min(max(abs(fl.vy) / max(fl.hw, 1e-3), 0), 1)
                 let uc = min(max(fl.u, 0), 1)
-                var pp = powf(sm(0.12, 1.0, uc + 0.05 * nz.at(X, Y)), 1.25) * (0.78 + 0.22 * s) + 0.18 * s * s * uc
+                let pBase: Float = powf(sm(0.12, 1.0, uc + 0.05 * nz.at(X, Y)), 1.25)
+                var pp: Float = pBase * (0.78 + 0.22 * s) + 0.18 * s * s * uc
                 pp = min(max(pp * pinkness, 0), 1)
                 pp += pinkBase * (1 - pp) * sm(0, 0.35, uc)
                 var cc = pp < 0.45 ? mixc(cream, blush, pp / 0.45) : mixc(blush, pink, min((pp - 0.45) / 0.55, 1))

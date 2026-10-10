@@ -48,6 +48,10 @@ struct SettingsView: View {
                 Toggle("下雨", isOn: $s.rainEnabled).toggleStyle(.switch)
             }
 
+            group("荷叶") {
+                sliderRow("荷叶密度", value: $s.padDensity, range: 0.3...1.5, step: 0.05, text: percent(s.padDensity))
+            }
+
             group("鱼") {
                 sliderRow("鱼的数量", value: $s.fishCount, range: 5...30, step: 1, text: "\(s.fishTarget) 条")
             }
